@@ -1,9 +1,9 @@
-#!/bin/python
+#!python
 
 """Check Mock Usage in Tests
 
 Usage:
-  check_mock_usage [--path=<root>] [--suffix=<filesuffix>] [--suite_pat=<suitepat>] [--test_pat=<testpat>] [--mock_pat=<mockpat>]
+  check_mock_usage [--path=<root>] [--suffix=<suffix>] [--suite_pat=<suitepat>] [--test_pat=<testpat>] [--mock_pat=<mockpat>]
   check_mock_usage -h | --help
   check_mock_usage --version
 
@@ -11,7 +11,7 @@ Options:
   -h --help                Show this screen.
   --version                Show version.
   --path=<root>            Directory to scan (default is current working directory)
-  --suffix=<filesuffix>    File name suffix to restrict to (default is '.ts')
+  --suffix=<suffix>        File name suffix to restrict to (default is '.ts')
   --suite_pat=<suitepat>   A pattern to use to detect start of a test suite and extract name.
   --test_pat=<testpat>     A pattern to use to detect start of a test and extract name.
   --mock_pat=<mockpat>     A pattern to user to detect the creation of a mock.
@@ -19,6 +19,10 @@ Options:
 Note that if helper functions are used, results are approximate. Any mock pattern matches defined 
 between the start of the suite and the first test are assumed to accrue to every test in the 
 suite.
+
+The --path argument can point to a file that contains a specific list of files to scan, if
+this is preferable to finding all matching files in a directory tree. In this case the --suffix
+argument is ignored.
 """
 
 import docopt
@@ -30,13 +34,12 @@ import re
 def count(root, suffix, suite_pat, test_pat, mock_pat):
     if root is None:
         root = '.'
-    filepat = '*.ts' if suffix is None else '*.' + suffix[suffix.find('.')+1:]
     if suite_pat is None:
         suite_pat = '^[ \t]*suite\([\'\"](.*)[\'\"],'
     if test_pat is None:
-        test_pat = '^[ \t]*test\([\'\"](.*)[\'\"],'
+        test_pat = '^[ \t]*test\([`\'\"](.*)[`\'\"],'
     if mock_pat is None:
-        mock_pat = '\.Mock\.ofType'
+        mock_pat = '(\.Mock\.ofType)|(mock\()|(sinon.stub)'
 
     try:
         suite_re = re.compile(suite_pat)
@@ -56,9 +59,9 @@ def count(root, suffix, suite_pat, test_pat, mock_pat):
         print(f"Invalid mock pattern {mock_pat}: {e}")
         return
 
-    pathpat = root + '/**/' + filepat
     results = []
     file_results = {}
+    file_counts = {}
     histo = {}
     total_mocks = 0
     total_tests = 0
@@ -83,9 +86,17 @@ def count(root, suffix, suite_pat, test_pat, mock_pat):
             else:
                 histo[mocks] = 1
         
-    for name in glob.iglob(pathpat, recursive=True):
+    if os.path.isfile(root):
+        with open(root) as f:
+            files = f.read().split('\n')
+    else:
+        filepat = '*.ts' if suffix is None else '*.' + suffix[suffix.find('.')+1:]
+        pathpat = root + '/**/' + filepat
+        files = glob.iglob(pathpat, recursive=True)
+
+    for name in files:
         n = 0
-        if os.path.isdir(name): 
+        if not os.path.isfile(name): 
             continue
         try:
             with open(name) as f:
@@ -121,8 +132,8 @@ def count(root, suffix, suite_pat, test_pat, mock_pat):
 
                 log_result()
                 file_avg = round(total_mocks_in_file / total_tests_in_file) if total_tests_in_file > 0 else 0
-                if total_mocks_in_file > 0:
-                    file_results[name] = file_avg
+                file_results[name] = file_avg
+                file_counts[name] = total_tests_in_file
 
         except Exception as e:
             print(f"Couldn't process file {name}: {e} at line {n}")
@@ -135,10 +146,10 @@ def count(root, suffix, suite_pat, test_pat, mock_pat):
     
     results = sorted(results)
     for name, value in sorted(file_results.items(), key=lambda item: item[1], reverse=True):
+
+        print(f'\nFile {name} has {file_counts[name]} tests with an average of {value} mocks per test')
         if value == 0:
             continue
-
-        print(f'\nFile {name} has average {value} mocks per test')
 
         k = name + ':'
         got_group = False
